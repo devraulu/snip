@@ -1,6 +1,11 @@
-use std::{fmt::Display, path::PathBuf};
-
-use clap::{CommandFactory, Parser, Subcommand};
+use clap::{Parser, Subcommand};
+use serde::{Deserialize, Serialize};
+use std::{
+    fmt::Display,
+    fs::{File, OpenOptions, create_dir_all},
+    io::BufWriter,
+    path::PathBuf,
+};
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -30,15 +35,21 @@ enum Commands {
 
     List {
         #[arg(short, long)]
-        tag: String,
+        tag: Option<String>,
     },
 
     Get {
-        position: u8,
+        id: u32,
+    },
+
+    Pop,
+
+    Remove {
+        id: u32,
     },
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
     if let Some(config_path) = cli.config.as_deref() {
@@ -52,24 +63,66 @@ fn main() {
         _ => println!("Don't be crazy"),
     }
 
+    let mut config_path: PathBuf = dirs::config_dir().expect("No config directory found");
+
+    config_path.push("snip");
+    create_dir_all(&config_path)?;
+    config_path.push("snippets.json");
+
+    let mut snippets: Vec<Snippet> = if config_path.exists() && config_path.metadata()?.len() > 0 {
+        let reader = File::open(&config_path)?;
+        serde_json::from_reader(reader)?
+    } else {
+        vec![]
+    };
+
     match &cli.command {
         Some(Commands::Add { code, lang, tags }) => {
-            let output = Snippet {
-                id: 0,
+            let new_snippet = Snippet {
+                id: (snippets.iter().map(|s| s.id).max().unwrap_or(0) + 1) as u32,
                 code: code.to_owned(),
                 lang: lang.to_owned(),
                 tags: tags.to_owned().unwrap_or_default(),
             };
 
-            println!("Saved snippet {output}")
+            snippets.push(new_snippet);
+
+            let writer = BufWriter::new(File::create(&config_path)?);
+            serde_json::to_writer_pretty(writer, &snippets)?;
         }
-        Some(Commands::List { tag }) => {}
-        Some(Commands::Get { position }) => {}
+        Some(Commands::List { tag }) => {
+            let matched_snippets: Vec<_> = snippets
+                .into_iter()
+                .filter(|s| match tag {
+                    Some(tag) => s.tags.iter().any(|t| t.contains(tag)),
+                    None => true,
+                })
+                .collect();
+
+            for ele in matched_snippets {
+                println!("{}: {}", ele.id, serde_json::to_string_pretty(&ele)?)
+            }
+        }
+        Some(Commands::Get { id }) => {
+            if let Some(found_snippet) = snippets.iter().find(|s| s.id.eq(id)) {
+                println!("{}", found_snippet.code)
+            } else {
+                eprintln!("Snippet with ID {id} not found")
+            }
+        }
+        Some(Commands::Pop) => {
+            todo!()
+        }
+        Some(Commands::Remove { id }) => {
+            todo!()
+        }
         _ => {}
     };
+
+    Ok(())
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 struct Snippet {
     id: u32,
     code: String,
